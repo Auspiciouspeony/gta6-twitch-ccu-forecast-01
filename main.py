@@ -71,6 +71,10 @@ SLOPE_VPC_MIN = -1.0
 SLOPE_VPC_MAX = 1.0
 # How much the fitted centre leans on the regression vs the kernel median.
 FIT_WEIGHT = 0.5
+# The fitted centre may not move further than this (log units) from the
+# kernel median: a safety rail so one wild fit cannot drag an hour's
+# forecast away from what the nearest launches actually did.
+MAX_FIT_DEVIATION = 0.35
 # How much the residual spread is narrowed before it becomes the quantile
 # spread.
 SPREAD_SHRINK = 0.7
@@ -248,6 +252,10 @@ def _hour_shape(comparables, target_h1, target_vpc):
         else:
             intercept, slope1, slope2 = fit
             centre = FIT_WEIGHT * intercept + (1 - FIT_WEIGHT) * median
+            centre = min(
+                max(centre, median - MAX_FIT_DEVIATION),
+                median + MAX_FIT_DEVIATION,
+            )
             total = sum(w for _, _, _, w in rows)
             var = sum(
                 w * (y - (intercept + slope1 * x1 + slope2 * x2)) ** 2
