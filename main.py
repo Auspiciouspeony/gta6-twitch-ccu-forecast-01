@@ -25,16 +25,21 @@ The fit is weighted: a launch counts more when it resembles this one (a
 rolling midnight-local unlock and console-only platforms count double, a
 single simultaneous global unlock, paid early access, or a weak tier count
 half) and when its own hour-1 print is close to this case's (a Gaussian
-kernel of width 1.0 in log space). The fitted slopes are clipped to a sane
-band and ridge-shrunk, and the fitted centre is averaged 50/50 with the
-plain kernel-weighted median of the same ratios, so no single fit can drag
-the forecast away from what the nearest launches actually did.
+kernel of width 1.2 in log space -- wide enough that the console-only
+family, RDR2 and the Sony launches among them, still weighs in when the
+target's hour 1 is far above every comparable, as GTA VI's will be). The
+fitted slopes are clipped to a sane band and ridge-shrunk, and the fitted
+centre is averaged 50/50 with the plain kernel-weighted median of the same
+ratios, so no single fit can drag the forecast away from what the nearest
+launches actually did.
 
 The spread for an hour is the weighted spread of the residuals around the
-fit, narrowed by 0.7 and clipped to [0.20, 0.90] in log units, so the five
-quantiles are the median times exp(z_tau * spread). The quantiles are
-rounded to 2 decimals. Everything is deterministic: the same case file
-always yields the same bytes.
+fit, narrowed by 0.7 and clipped to [0.20, 0.90] in log units, then smoothed
+with a 3-point moving average across neighbouring hours, since the true
+dispersion changes slowly over the day while the per-hour estimate is
+noisy. The five quantiles are the median times exp(z_tau * spread). The
+quantiles are rounded to 2 decimals. Everything is deterministic: the same
+case file always yields the same bytes.
 
 Fallbacks keep the program from ever failing a case: a comparable with no
 usable release-day hour 1 is skipped; when channel counts are missing the
@@ -61,7 +66,7 @@ INPUT_DIR = Path(os.environ.get("MAKEFUN_INPUT_DIR", "/input"))
 OUTPUT_DIR = Path(os.environ.get("MAKEFUN_OUTPUT_DIR", "/output"))
 
 # How wide the hour-1 similarity kernel is, in natural-log units.
-H1_SIGMA = 1.0
+H1_SIGMA = 1.2
 # Ridge penalty on the fitted slopes, as a fraction of the total weight.
 RIDGE = 0.05
 # Clips on the fitted slopes: the hour-1 slope and the concentration slope.
@@ -209,6 +214,7 @@ def _hour_shape(comparables, target_h1, target_vpc):
     weighted by its similarity to this launch and by how close its own
     hour-1 print is to the target's. The centre blends a two-feature
     regression fit with the kernel-weighted median of the same ratios.
+    Spreads are then smoothed across neighbouring hours.
     """
     log_target = math.log(max(1, target_h1))
     log_vpc = math.log(max(1e-9, target_vpc)) if target_vpc else None
@@ -264,6 +270,14 @@ def _hour_shape(comparables, target_h1, target_vpc):
             spread = math.sqrt(max(var, 0.0))
         spread = min(max(spread * SPREAD_SHRINK, SPREAD_MIN), SPREAD_MAX)
         shape[hour] = (centre, spread)
+    # Smooth the spreads across neighbouring hours: the true dispersion
+    # moves slowly over the day, while each hour's estimate is noisy.
+    spreads = {hour: shape[hour][1] for hour in range(2, 25)}
+    for hour in range(2, 25):
+        neighbours = [
+            spreads[h] for h in (hour - 1, hour, hour + 1) if h in spreads
+        ]
+        shape[hour] = (shape[hour][0], sum(neighbours) / len(neighbours))
     return shape
 
 
